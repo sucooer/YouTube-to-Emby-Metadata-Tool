@@ -332,7 +332,7 @@ def update_yt_dlp_in_app(version_type, log_func=print, github_token=None):
         latest_version = r.json().get("tag_name")
         if local_version and latest_version and local_version == latest_version:
             log_func(f"yt-dlp 已经是最新版（{local_version}），无需更新。")
-            return True
+            return False
         assets = r.json().get("assets", [])
         url = None
         for asset in assets:
