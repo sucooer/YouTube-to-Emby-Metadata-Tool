@@ -1,0 +1,5 @@
+customtkinter>=5.2.0
+yt-dlp>=2025.05.22
+requests>=2.31.0
+webvtt-py>=0.4.6
+pysubs2>=1.6.0 
