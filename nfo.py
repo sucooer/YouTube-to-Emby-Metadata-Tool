@@ -561,6 +561,68 @@ def get_nightly_download_url():
     # 直接返回nightly源码包的静态下载地址
     return "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz"
 
+def get_latest_versions(log_func=print):
+    import requests
+    latest_versions = {
+        'stable': '获取失败',
+        'nightly': '获取失败',
+        'master': '获取失败'
+    }
+
+    # 获取 Stable 最新版本 (从 PyPI)
+    try:
+        log_func("获取 Stable 最新版本...")
+        r = requests.get("https://pypi.org/pypi/yt-dlp/json", timeout=10)
+        r.raise_for_status()
+        latest_versions['stable'] = r.json()["info"]["version"]
+        log_func(f"Stable 最新版本: {latest_versions['stable']}")
+    except Exception as e:
+        log_func(f"获取 Stable 最新版本失败: {e}")
+        latest_versions['stable'] = f"获取失败 ({e})"
+
+    # 获取 Nightly 最新版本 (从 GitHub Releases HTML 页面解析)
+    # 直接从静态下载地址 URL 中提取版本信息可能不可靠，解析 Release 页面更稳定
+    try:
+        log_func("获取 Nightly 最新版本...")
+        # 访问 Releases 页面
+        r = requests.get("https://github.com/yt-dlp/yt-dlp-nightly-builds/releases", timeout=10)
+        r.raise_for_status()
+        # 简单的字符串查找或正则表达式来找到最新的 tag_name
+        # 查找类似 <a href="/yt-dlp/yt-dlp-nightly-builds/releases/tag/2024.x.x">2024.x.x</a> 的模式
+        match = re.search(r'/yt-dlp/yt-dlp-nightly-builds/releases/tag/(.*?)"', r.text)
+        if match:
+            latest_versions['nightly'] = match.group(1)
+            log_func(f"Nightly 最新版本: {latest_versions['nightly']}")
+        else:
+            log_func("在 Nightly Releases 页面未找到版本信息")
+            latest_versions['nightly'] = "未找到"
+
+    except Exception as e:
+        log_func(f"获取 Nightly 最新版本失败: {e}")
+        latest_versions['nightly'] = f"获取失败 ({e})"
+
+
+    # 获取 Master 最新版本 (从 GitHub Releases HTML 页面解析)
+    try:
+        log_func("获取 Master 最新版本...")
+        # 访问 Releases 页面
+        r = requests.get("https://github.com/yt-dlp/yt-dlp-master-builds/releases", timeout=10)
+        r.raise_for_status()
+         # 简单的字符串查找或正则表达式来找到最新的 tag_name
+        match = re.search(r'/yt-dlp/yt-dlp-master-builds/releases/tag/(.*?)"', r.text)
+        if match:
+            latest_versions['master'] = match.group(1)
+            log_func(f"Master 最新版本: {latest_versions['master']}")
+        else:
+            log_func("在 Master Releases 页面未找到版本信息")
+            latest_versions['master'] = "未找到"
+
+    except Exception as e:
+        log_func(f"获取 Master 最新版本失败: {e}")
+        latest_versions['master'] = f"获取失败 ({e})"
+
+    return latest_versions
+
 def main():
     update_ytdlp()
     print("====== YouTube to Emby Metadata Tool ======")
