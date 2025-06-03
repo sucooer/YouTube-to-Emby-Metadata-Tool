@@ -1,5 +1,6 @@
 import sys
 import os
+import io
 
 def get_app_dir():
     if hasattr(sys, '_MEIPASS'):
@@ -19,8 +20,26 @@ from nfo import (
     download_subtitles,
     generate_metadata_files,
     check_ffmpeg_installed,
-    update_ytdlp
+    update_ytdlp,
+    download_and_extract_yt_dlp
 )
+
+class ConsoleRedirector(io.TextIOBase):
+    def __init__(self, log_widget, message_queue):
+        self._log_widget = log_widget
+        self._message_queue = message_queue
+
+    def write(self, s):
+        # 只处理非空字符串，避免Tkinter的IdleError
+        if s and s.strip():
+            self._message_queue.put(s.strip()) # strip()移除可能的空白行
+
+    def flush(self):
+        # flush操作，对于这种简单的文本输出器，通常不需要做什么
+        pass
+
+    def isatty(self):
+        return False # 不是交互式终端
 
 def restart_program():
     """自动重启当前应用"""
@@ -140,6 +159,13 @@ class YouTubeToEmbyApp(ctk.CTk):
         )
         self.log_text.pack(fill="both", expand=True, padx=5, pady=5)
 
+        # 将重定向代码移动到这里
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        self._redirector = ConsoleRedirector(self.log_text, self.message_queue)
+        sys.stdout = self._redirector
+        sys.stderr = self._redirector
+
         # 开始按钮
         self.start_button = ctk.CTkButton(
             self.main_frame,
@@ -154,13 +180,13 @@ class YouTubeToEmbyApp(ctk.CTk):
         self.ytdlp_frame.pack(fill="x", pady=6)
         self.ytdlp_label = ctk.CTkLabel(self.ytdlp_frame, text="yt-dlp 版本：")
         self.ytdlp_label.pack(side="left", padx=5)
-        self.ytdlp_version_var = tk.StringVar(value="nightly")
+        self.ytdlp_version_var = tk.StringVar(value="stable")
         self.ytdlp_option = ctk.CTkOptionMenu(
             self.ytdlp_frame,
             variable=self.ytdlp_version_var,
-            values=["nightly"]
+            values=["stable", "nightly", "master"],
+            command=self.show_ytdlp_version
         )
-        self.ytdlp_option.configure(state="disabled")
         self.ytdlp_option.pack(side="left", padx=5)
         self.ytdlp_update_btn = ctk.CTkButton(
             self.ytdlp_frame,
@@ -239,8 +265,9 @@ class YouTubeToEmbyApp(ctk.CTk):
 
     def download_process(self, url, output_dir, cookie_path, video_format):
         try:
+            ytdlp_version = self.ytdlp_version_var.get()
             self.update_status("正在获取视频信息...")
-            video_info = get_video_info(url, cookie_path)
+            video_info = get_video_info(url, cookie_path, ytdlp_version)
             
             if not video_info:
                 self.update_status("获取视频信息失败")
@@ -254,13 +281,13 @@ class YouTubeToEmbyApp(ctk.CTk):
             self.update_status(f"创建输出目录: {output_dir}")
 
             self.update_status("开始下载视频...")
-            video_filename = download_video(video_info, output_dir)
+            video_filename = download_video(video_info, output_dir, ytdlp_version)
             if not video_filename:
                 self.update_status("视频下载失败")
                 return
 
             self.update_status("开始下载字幕...")
-            download_subtitles(video_info, output_dir)
+            download_subtitles(video_info, output_dir, ytdlp_version)
 
             self.update_status("生成元数据文件...")
             generate_metadata_files(video_info, output_dir)
@@ -275,22 +302,35 @@ class YouTubeToEmbyApp(ctk.CTk):
             # 重新启用开始按钮
             self.start_button.configure(state="normal")
 
-    def show_ytdlp_version(self):
+    def show_ytdlp_version(self, selected_version=None):
         try:
-            from yt_dlp.version import __version__ as ytdlp_version
-            self.ytdlp_current_label.configure(text=f"当前版本: {ytdlp_version} (nightly)")
+            from nfo import get_current_ytdlp_version
+            
+            if selected_version:
+                version_type = selected_version
+            else:
+                version_type = self.ytdlp_version_var.get()
+            
+            ytdlp_version = get_current_ytdlp_version(version_type)
+
+            if ytdlp_version:
+                self.ytdlp_current_label.configure(text=f"当前版本: {ytdlp_version} ({version_type})")
+            else:
+                self.ytdlp_current_label.configure(text=f"当前版本: 未加载 ({version_type})")
+
         except Exception as e:
             self.ytdlp_current_label.configure(text=f"当前版本: 获取失败")
+            self.log_message(f"显示版本失败: {e}")
 
     def update_ytdlp_gui(self):
-        from nfo import update_yt_dlp_in_app
+        from nfo import download_and_extract_yt_dlp
         version_type = self.ytdlp_version_var.get()
         self.log_message(f"准备更新yt-dlp为 {version_type} 版本...")
         self.ytdlp_update_btn.configure(state="disabled")
         def log_func(msg):
             self.log_message(msg)
         def do_update():
-            ok = update_yt_dlp_in_app(version_type, log_func)
+            ok = download_and_extract_yt_dlp(version_type, log_func)
             self.ytdlp_update_btn.configure(state="normal")
             self.show_ytdlp_version()
             if ok:
