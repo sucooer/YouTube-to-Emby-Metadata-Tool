@@ -2,6 +2,7 @@ import sys
 import os
 import io
 import re
+import json
 
 def get_app_dir():
     if hasattr(sys, '_MEIPASS'):
@@ -9,6 +10,8 @@ def get_app_dir():
     return os.path.abspath(os.path.dirname(__file__))
 
 sys.path.insert(0, get_app_dir())
+
+CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
 
 import customtkinter as ctk
 import tkinter as tk
@@ -24,6 +27,23 @@ from nfo import (
     update_ytdlp,
     download_and_extract_yt_dlp
 )
+
+def save_config(config_data):
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=4)
+    except Exception as e:
+        print(f"保存配置失败: {e}")
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"加载配置失败: {e}")
+        return {}
 
 class ConsoleRedirector(io.TextIOBase):
     def __init__(self, log_widget, message_queue):
@@ -101,6 +121,11 @@ class YouTubeToEmbyApp(ctk.CTk):
         
         self.cookie_entry = ctk.CTkEntry(self.cookie_frame, width=400)
         self.cookie_entry.pack(side="left", padx=5)
+        
+        config = load_config()
+        saved_cookie_path = config.get("cookie_file")
+        if saved_cookie_path and os.path.exists(saved_cookie_path):
+            self.cookie_entry.insert(0, saved_cookie_path)
         
         self.cookie_button = ctk.CTkButton(
             self.cookie_frame,
@@ -228,6 +253,9 @@ class YouTubeToEmbyApp(ctk.CTk):
         if file_path:
             self.cookie_entry.delete(0, tk.END)
             self.cookie_entry.insert(0, file_path)
+            config = load_config()
+            config["cookie_file"] = file_path
+            save_config(config)
 
     def log_message(self, message):
         self.message_queue.put(message)
