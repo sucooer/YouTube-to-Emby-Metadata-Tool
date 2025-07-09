@@ -264,8 +264,8 @@ def main():
 
     base_output_dir = input("Base output directory (default: ./downloads): ").strip() or "./downloads"
     os.makedirs(base_output_dir, exist_ok=True)
-    # 默认 cookie 文件路径
-    default_cookie_path = os.path.expanduser("~\\cookies.txt")
+    # 默认 cookie 文件路径（本项目根目录下）
+    default_cookie_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
     print(f"1. 使用默认 cookie 文件: {default_cookie_path}")
     print("2. 手动输入 cookie 文件路径")
     print("3. 不使用 cookie 文件")
