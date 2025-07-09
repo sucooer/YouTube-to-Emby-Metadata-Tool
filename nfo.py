@@ -5,8 +5,6 @@ import shutil
 import requests
 import xml.etree.ElementTree as ET
 import re  # 用于正则表达式解析
-import tkinter as tk
-from tkinter import filedialog
 import subprocess
 import importlib.util
 import zipfile
@@ -639,7 +637,7 @@ def main():
     # 默认 cookie 文件路径
     default_cookie_path = os.path.expanduser("~\\cookies.txt")
     print(f"1. 使用默认 cookie 文件: {default_cookie_path}")
-    print("2. 手动选择 cookie 文件")
+    print("2. 手动输入 cookie 文件路径")
     print("3. 不使用 cookie 文件")
     cookie_choice = input("请选择 cookie 文件方式（1/2/3，默认1）: ").strip() or "1"
     cookie_path = None
@@ -649,30 +647,12 @@ def main():
             print(f"⚠️ Cookie file not found: {cookie_path}")
             cookie_path = None
     elif cookie_choice == "2":
-        try:
-            root = tk.Tk()
-            root.withdraw()  # 隐藏主窗口
-            # 将窗口提升到最前
-            root.attributes('-topmost', True)
-            print("正在打开文件选择窗口...")
-            cookie_path = filedialog.askopenfilename(
-                title="选择 cookies.txt 文件",
-                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-                parent=root  # 设置父窗口
-            )
-            if cookie_path:
-                if not os.path.exists(cookie_path):
-                    print("⚠️ 所选文件不存在")
-                    cookie_path = None
-                else:
-                    print(f"✅ 已选择 cookie 文件: {cookie_path}")
-            else:
-                print("⚠️ 未选择任何文件")
-                cookie_path = None
-            root.destroy()  # 销毁 Tk 窗口
-        except Exception as e:
-            print(f"⚠️ 打开文件选择窗口失败: {str(e)}")
+        cookie_path = input("请输入 cookie 文件的完整路径: ").strip()
+        if not os.path.exists(cookie_path):
+            print("⚠️ 所选文件不存在")
             cookie_path = None
+        else:
+            print(f"✅ 已选择 cookie 文件: {cookie_path}")
     else:
         cookie_path = None
 
@@ -710,9 +690,6 @@ def main():
     print(f"- Video: {os.path.join(output_dir, video_filename)}")
     print(f"- Metadata: {os.path.join(output_dir, video_info['title'])}.nfo")
     print(f"- Thumbnail: {os.path.join(output_dir, video_info['title'])}-poster.jpg")
-
-    yt_dlp = import_yt_dlp('stable')
-    print("yt_dlp.version:", yt_dlp.version.__version__)
 
 if __name__ == "__main__":
     main()
