@@ -257,10 +257,22 @@ def main():
     # 检查 ffmpeg 是否已安装
     if not check_ffmpeg_installed():
         return
-    youtube_url = input("Enter YouTube URL: ").strip()
-    if not youtube_url.startswith(('http://', 'https://')):
-        print("❌ Invalid URL format")
-        return
+    print("请选择输入方式：")
+    print("1. 单个链接")
+    print("2. 批量链接（txt文件，每行一个链接）")
+    input_mode = input("输入 1 或 2（默认1）: ").strip() or "1"
+
+    if input_mode == "2":
+        default_links_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "links.txt")
+        txt_path = input(f"请输入包含链接的txt文件路径 (默认: {default_links_path}): ").strip() or default_links_path
+        if not os.path.exists(txt_path):
+            print("❌ 文件不存在")
+            return
+        with open(txt_path, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip()]
+    else:
+        youtube_url = input("Enter YouTube URL: ").strip()
+        urls = [youtube_url]
 
     base_output_dir = input("Base output directory (default: ./downloads): ").strip() or "./downloads"
     os.makedirs(base_output_dir, exist_ok=True)
@@ -296,30 +308,35 @@ def main():
     else:
         video_format = "mp4"
 
-    video_info = get_video_info(youtube_url, cookie_path)
-    if not video_info:
-        print("❌ Failed to fetch metadata")
-        return
-    video_info['cookiefile'] = cookie_path
-    video_info['video_format'] = video_format   # 传递格式信息
+    for youtube_url in urls:
+        if not youtube_url.startswith(('http://', 'https://')):
+            print(f"❌ Invalid URL format: {youtube_url}")
+            continue
 
-    output_dir = os.path.join(base_output_dir, video_info['title'])
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"📁 Created output folder: {output_dir}")
+        video_info = get_video_info(youtube_url, cookie_path)
+        if not video_info:
+            print("❌ Failed to fetch metadata")
+            continue
+        video_info['cookiefile'] = cookie_path
+        video_info['video_format'] = video_format   # 传递格式信息
 
-    video_filename = download_video(video_info, output_dir)
-    if not video_filename:
-        print("❌ Failed to download video")
-        return
+        output_dir = os.path.join(base_output_dir, video_info['title'])
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"📁 Created output folder: {output_dir}")
 
-    # 下载字幕
-    download_subtitles(video_info, output_dir)
+        video_filename = download_video(video_info, output_dir)
+        if not video_filename:
+            print("❌ Failed to download video")
+            continue
 
-    generate_metadata_files(video_info, output_dir)
-    print("\n🎉 Success! Files created:")
-    print(f"- Video: {os.path.join(output_dir, video_filename)}")
-    print(f"- Metadata: {os.path.join(output_dir, video_info['title'])}.nfo")
-    print(f"- Thumbnail: {os.path.join(output_dir, video_info['title'])}-poster.jpg")
+        # 下载字幕
+        download_subtitles(video_info, output_dir)
+
+        generate_metadata_files(video_info, output_dir)
+        print("\n🎉 Success! Files created:")
+        print(f"- Video: {os.path.join(output_dir, video_filename)}")
+        print(f"- Metadata: {os.path.join(output_dir, video_info['title'])}.nfo")
+        print(f"- Thumbnail: {os.path.join(output_dir, video_info['title'])}-poster.jpg")
 
 if __name__ == "__main__":
     main()
