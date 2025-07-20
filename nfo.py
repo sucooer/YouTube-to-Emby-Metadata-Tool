@@ -9,12 +9,38 @@ import importlib.util
 import zipfile
 import tarfile
 import tempfile
-import yt_dlp
+
+# 直接导入pip安装的yt-dlp
+try:
+    import yt_dlp
+    print("✓ 成功加载pip安装的yt-dlp")
+    
+    # 尝试快速获取版本信息
+    version_info = "版本信息不可用"
+    try:
+        from importlib.metadata import version
+        version_info = version('yt-dlp')
+    except:
+        try:
+            import pkg_resources
+            version_info = pkg_resources.get_distribution('yt-dlp').version
+        except:
+            pass
+    
+    print(f"✓ 版本: {version_info}")
+except ImportError as e:
+    print("❌ 未找到yt-dlp，请运行: pip install --pre yt-dlp")
+    print(f"错误详情: {e}")
+    # 不直接退出，让程序继续运行，在Web界面中提示用户安装
+    yt_dlp = None
 
 def sanitize_filename(title):
     return "".join(c for c in title if c not in '\\/*?:"<>|').strip()
 
 def get_video_info(url, cookie_file=None):
+    if yt_dlp is None:
+        raise ImportError("yt-dlp未安装，请运行: pip install --pre yt-dlp")
+    
     # 确保 URL 格式正确
     if 'youtube.com/watch?v=' in url:
         video_id = url.split('watch?v=')[-1].split('&')[0]
@@ -85,6 +111,9 @@ def get_video_info(url, cookie_file=None):
         return None
 
 def download_video(info, output_dir):
+    if yt_dlp is None:
+        raise ImportError("yt-dlp未安装，请运行: pip install --pre yt-dlp")
+    
     try:
         YoutubeDL = yt_dlp.YoutubeDL
         video_format = info.get('video_format', 'mp4')
@@ -111,6 +140,9 @@ def download_video(info, output_dir):
         return None
 
 def download_subtitles(info, output_dir):
+    if yt_dlp is None:
+        raise ImportError("yt-dlp未安装，请运行: pip install --pre yt-dlp")
+    
     try:
         YoutubeDL = yt_dlp.YoutubeDL
         ydl_opts = {
@@ -240,14 +272,106 @@ def check_ffmpeg_installed():
         return False
     return True
 
+def get_current_ytdlp_version():
+    """获取当前pip安装的yt-dlp版本"""
+    try:
+        # 检查yt_dlp是否可用
+        if yt_dlp is None:
+            return "未安装"
+        
+        # 方法1：使用importlib.metadata (Python 3.8+) - 最可靠
+        try:
+            from importlib.metadata import version
+            ver = version('yt-dlp')
+            print(f"✓ importlib.metadata获取版本: {ver}")
+            return ver
+        except Exception as e:
+            print(f"importlib.metadata失败: {e}")
+        
+        # 方法2：使用pkg_resources
+        try:
+            import pkg_resources
+            ver = pkg_resources.get_distribution('yt-dlp').version
+            print(f"✓ pkg_resources获取版本: {ver}")
+            return ver
+        except Exception as e:
+            print(f"pkg_resources失败: {e}")
+        
+        # 方法3：使用subprocess调用yt-dlp --version
+        try:
+            result = subprocess.run([sys.executable, '-m', 'yt_dlp', '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                ver = result.stdout.strip()
+                print(f"✓ 命令行获取版本: {ver}")
+                return ver
+            else:
+                print(f"命令行调用失败: {result.stderr}")
+        except Exception as e:
+            print(f"命令行调用异常: {e}")
+        
+        # 方法4：直接从模块获取（通常不可用）
+        if hasattr(yt_dlp, '__version__'):
+            ver = yt_dlp.__version__
+            print(f"✓ 模块属性获取版本: {ver}")
+            return ver
+        
+        # 方法5：尝试从version模块获取
+        try:
+            from yt_dlp import version as ytdlp_version
+            if hasattr(ytdlp_version, '__version__'):
+                ver = ytdlp_version.__version__
+                print(f"✓ version模块获取版本: {ver}")
+                return ver
+        except Exception as e:
+            print(f"version模块失败: {e}")
+        
+        print("所有版本获取方法都失败了")
+        return "版本获取失败"
+    except Exception as e:
+        print(f"获取版本异常: {e}")
+        return "版本获取失败"
+
+def update_ytdlp_nightly(log_func=print):
+    """更新yt-dlp到nightly版本"""
+    try:
+        log_func("正在更新yt-dlp到nightly版本...")
+        
+        # 使用pip安装nightly版本
+        result = subprocess.run([
+            sys.executable, "-m", "pip", "install", 
+            "--upgrade", "--pre", "yt-dlp"
+        ], capture_output=True, text=True, timeout=300)
+        
+        if result.returncode == 0:
+            log_func("✓ yt-dlp nightly版本更新成功")
+            
+            # 重新导入模块以获取新版本
+            import importlib
+            importlib.reload(yt_dlp)
+            
+            new_version = get_current_ytdlp_version()
+            log_func(f"新版本: {new_version}")
+            return True
+        else:
+            log_func(f"❌ 更新失败: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        log_func("❌ 更新超时")
+        return False
+    except Exception as e:
+        log_func(f"❌ 更新失败: {e}")
+        return False
+
 def update_ytdlp():
-    print("是否需要检查并自动更新 yt-dlp？")
+    print("是否需要检查并自动更新 yt-dlp nightly版本？")
     choice = input("输入 y 进行更新，直接回车跳过: ").strip().lower()
     if choice == "y":
         try:
-            print("⌛ 正在通过 pip 更新 yt-dlp ...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"])
-            print("✅ yt-dlp 已通过 pip 更新")
+            print("⌛ 正在通过 pip 更新 yt-dlp nightly版本...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "--pre", "yt-dlp"])
+            print("✅ yt-dlp nightly版本已更新")
         except Exception as e:
             print(f"❌ yt-dlp 更新失败: {e}")
 

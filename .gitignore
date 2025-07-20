@@ -8,6 +8,7 @@ __pycache__/
 *.so
 .Python
 build/
+temp/
 yt_dlp_stable/
 yt_dlp_nightly/
 yt_dlp_master/

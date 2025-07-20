@@ -25,7 +25,7 @@ from nfo import (
     generate_metadata_files,
     check_ffmpeg_installed,
     update_ytdlp,
-    download_and_extract_yt_dlp
+    update_ytdlp_nightly
 )
 
 def save_config(config_data):
@@ -201,40 +201,30 @@ class YouTubeToEmbyApp(ctk.CTk):
         )
         self.start_button.pack(pady=10)
 
-        # yt-dlp 版本选择与更新
+        # yt-dlp 版本信息与更新
         self.ytdlp_frame = ctk.CTkFrame(self.main_frame)
         self.ytdlp_frame.pack(fill="x", pady=6)
 
-        self.ytdlp_label = ctk.CTkLabel(self.ytdlp_frame, text="yt-dlp 版本：")
+        self.ytdlp_label = ctk.CTkLabel(self.ytdlp_frame, text="yt-dlp:")
         self.ytdlp_label.pack(side="left", padx=5)
-
-        self.ytdlp_version_var = tk.StringVar(value="stable")
-        self.ytdlp_option = ctk.CTkOptionMenu(
-            self.ytdlp_frame,
-            variable=self.ytdlp_version_var,
-            values=["stable", "nightly", "master"],
-            command=self.show_ytdlp_version # 切换版本时更新显示
-        )
-        self.ytdlp_option.pack(side="left", padx=5)
 
         self.ytdlp_update_btn = ctk.CTkButton(
             self.ytdlp_frame,
             text="更新yt-dlp",
-            command=self.update_ytdlp_gui # 点击更新按钮时触发下载和显示
+            command=self.update_ytdlp_gui,
+            width=120
         )
-        self.ytdlp_update_btn.pack(side="left", padx=10)
+        self.ytdlp_update_btn.pack(side="left", padx=5)
 
-        # >>> 添加一个标签来显示当前选中版本的详细信息 <<<
-        self.ytdlp_info_label = ctk.CTkLabel(self.ytdlp_frame, text="当前版本: 检测中... 最新: 检测中...")
-        self.ytdlp_info_label.pack(side="left", padx=10) # 和下拉菜单、更新按钮同行显示
-        # >>> 添加结束 <<<
+        self.ytdlp_info_label = ctk.CTkLabel(
+            self.ytdlp_frame,
+            text="版本信息加载中...",
+            wraplength=400
+        )
+        self.ytdlp_info_label.pack(side="left", padx=5)
 
-        # 初始化一个字典来存储获取到的最新版本信息
-        self.latest_versions_data = {}
-
-        # 应用程序启动后，延迟显示当前版本和获取最新版本
-        self.after(100, self.show_ytdlp_version) # 显示当前加载的版本 (默认 stable)
-        self.after(100, self.fetch_and_show_latest_versions) # 获取并显示所有最新版本 (会触发更新 info 标签)
+        # 应用程序启动后显示当前版本
+        self.after(100, self.show_current_version)
 
         # 检查ffmpeg
         if not check_ffmpeg_installed():
@@ -306,9 +296,9 @@ class YouTubeToEmbyApp(ctk.CTk):
 
     def download_process(self, url, output_dir, cookie_path, video_format):
         try:
-            ytdlp_version = self.ytdlp_version_var.get()
+            # 使用nightly版本
             self.update_status("正在获取视频信息...")
-            video_info = get_video_info(url, cookie_path, ytdlp_version)
+            video_info = get_video_info(url, cookie_path)
             
             if not video_info:
                 self.update_status("获取视频信息失败")
@@ -376,49 +366,37 @@ class YouTubeToEmbyApp(ctk.CTk):
             self.log_message(f"显示 {version_type} 版本失败: {e}")
 
     def update_ytdlp_gui(self):
-        from nfo import download_and_extract_yt_dlp
-        version_type = self.ytdlp_version_var.get()
-        self.log_message(f"准备更新yt-dlp为 {version_type} 版本...")
+        self.log_message("准备更新yt-dlp到nightly版本...")
         self.ytdlp_update_btn.configure(state="disabled")
+        self.ytdlp_info_label.configure(text="正在更新...")
+        
         def log_func(msg):
             self.log_message(msg)
-        def do_update():
-            ok = download_and_extract_yt_dlp(version_type, log_func)
-            self.ytdlp_update_btn.configure(state="normal")
-            self.show_ytdlp_version() # 更新当前版本显示
             
-            # >>> 成功更新后，更新最新版本显示 <<<
-            self.fetch_and_show_latest_versions()
-            # >>> 添加结束 <<<
-
+        def do_update():
+            ok = update_ytdlp_nightly(log_func)
+            self.ytdlp_update_btn.configure(state="normal")
+            
             if ok:
-                self.log_message("yt-dlp已更新，正在自动重启应用...")
-                self.after(1200, restart_program)
+                self.log_message("yt-dlp已更新成功！")
+                # 更新版本信息显示
+                self.after(1000, self.show_current_version)
+            else:
+                self.log_message("yt-dlp更新失败，请检查网络连接")
+                self.ytdlp_info_label.configure(text="更新失败")
 
         threading.Thread(target=do_update, daemon=True).start()
 
-    def fetch_and_show_latest_versions(self):
-        from nfo import get_latest_versions
-
-        # 在新线程中获取最新版本，避免阻塞 GUI
-        def do_fetch():
-            latest_versions = get_latest_versions(self.log_message)
-            # 获取完成后，更新 GUI 标签 (必须在主线程中进行 GUI 更新)
-            self.after(0, lambda: self.update_latest_version_labels(latest_versions))
-
-        threading.Thread(target=do_fetch, daemon=True).start()
-
-    def update_latest_version_labels(self, latest_versions):
-        # 将获取到的最新版本信息存储起来
-        self.latest_versions_data = latest_versions
-        self.log_message("最新版本信息已更新。")
-
-        # 获取当前下拉菜单选中的版本类型
-        current_selected_version = self.ytdlp_version_var.get()
-
-        # 调用 show_ytdlp_version 来更新主信息标签的显示
-        # 传递当前选中的版本类型，确保标签显示的是这个版本的信息
-        self.show_ytdlp_version(current_selected_version)
+    def show_current_version(self):
+        """显示当前yt-dlp版本"""
+        try:
+            from nfo import get_current_ytdlp_version
+            current_version = get_current_ytdlp_version()
+            self.ytdlp_info_label.configure(text=f"当前版本: {current_version}")
+            self.log_message(f"当前yt-dlp版本: {current_version}")
+        except Exception as e:
+            self.ytdlp_info_label.configure(text="版本获取失败")
+            self.log_message(f"获取版本信息失败: {e}")
 
 if __name__ == "__main__":
     app = YouTubeToEmbyApp()

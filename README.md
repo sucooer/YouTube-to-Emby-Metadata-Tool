@@ -1,45 +1,62 @@
-# YouTube to Emby Metadata Tool (Integrated yt-dlp Nightly Version)
+# YouTube to Emby Metadata Tool
 
-This is a desktop GUI application that integrates the latest yt-dlp nightly version. No local Python or yt-dlp environment is required. It supports one-click updates, automatic restart, and all download and metadata features are based on the nightly version of yt-dlp.
+A comprehensive YouTube video downloader with Emby media server integration. This tool provides both a modern web interface and a desktop GUI application, featuring automatic metadata generation, subtitle download, and seamless Emby NFO file creation.
 
-## Main Features
+## 🌟 Main Features
 
-- Built-in yt-dlp nightly version, always up-to-date
-- One-click automatic update of yt-dlp, no command line needed
-- Automatic application restart after update
-- Supports YouTube video download, subtitle download, and Emby NFO metadata generation
-- Integrated ffmpeg (no separate installation required)
-- Modern Material Design style interface
-- No local Python/yt-dlp/ffmpeg dependencies, ready to use after packaging
+- **Dual Interface Options**: Modern web interface and desktop GUI application
+- **Built-in yt-dlp nightly version**: Always up-to-date with latest features
+- **One-click setup**: Easy installation with automated dependency management
+- **Emby Integration**: Automatic NFO metadata file generation for Emby media server
+- **Subtitle Support**: Automatic subtitle download and conversion
+- **Multiple Formats**: Support for MP4/MKV video formats
+- **Real-time Progress**: Live download progress monitoring
+- **Cookie Support**: Login-required content download capability
+- **Modern UI**: Material Design interface with responsive layout
 
-## System Requirements
+## 🚀 Quick Start
 
-- Windows 10/11
-- No local Python environment required
-- No local yt-dlp/ffmpeg required
+### Option 1: Easy Launch (Recommended)
+1. Download or clone this repository
+2. Run `YouTube_to_Emby.bat` (Windows)
+3. Select option `[3]` to install dependencies
+4. Select option `[1]` to start the web interface
 
-## Installation & Usage
-
-1. Download the release or source code of this project
-2. Make sure `tools/ffmpeg.exe` and the `yt_dlp/` source folder are in the project root directory
-3. Install dependencies (only needed for development/packaging):
+### Option 2: Manual Setup
+1. Install Python 3.7+ if not already installed
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Package as a standalone desktop app (recommended: `--onedir`):
-   ```bash
-   pyinstaller --noconsole --add-data "tools/ffmpeg.exe;tools" --add-data "yt_dlp;yt_dlp" --add-data "nfo.py;." --hidden-import requests --hidden-import customtkinter --onedir youtube_to_emby_gui.py
-   ```
-5. Run `dist/youtube_to_emby_gui/youtube_to_emby_gui.exe`
+3. Choose your preferred interface:
+   - **Web Interface**: `python app.py` then open http://localhost:5000
+   - **Desktop GUI**: `python youtube_to_emby_gui.py`
 
-## How to Use
+## 💻 System Requirements
 
-1. Enter the YouTube video URL
-2. Select the output directory (default: ./downloads)
-3. (Optional) Select a cookie file
-4. Choose the video format (MP4/MKV)
-5. Click "Start Download"
-6. To update yt-dlp, click the "Update yt-dlp" button; the app will restart automatically after updating
+- **Operating System**: Windows 10/11, macOS, or Linux
+- **Python**: 3.7 or higher (for source code usage)
+- **Internet Connection**: Required for downloads and updates
+- **Browser**: Modern web browser (for web interface)
+
+## 🎯 How to Use
+
+### Web Interface (Recommended)
+1. Open http://localhost:5000 in your browser
+2. Enter the YouTube video URL
+3. Configure download settings:
+   - Output directory
+   - Video format (MP4/MKV)
+   - Cookie file (optional)
+4. Click "Start Download"
+5. Monitor real-time progress in the web interface
+
+### Desktop GUI
+1. Launch the desktop application
+2. Enter the YouTube video URL
+3. Select output directory and format
+4. Click "Start Download"
+5. Use "Update yt-dlp" button to get latest features
 
 ## Version Information
 
