@@ -35,7 +35,28 @@ except ImportError as e:
     yt_dlp = None
 
 def sanitize_filename(title):
-    return "".join(c for c in title if c not in '\\/*?:"<>|').strip()
+    # 移除不允许的字符（Linux中主要是斜杠和空字符）
+    sanitized = "".join(c for c in title if c not in '/\0').strip()
+    
+    # 在Linux中，文件名限制是255字节，需要考虑UTF-8编码
+    max_bytes = 200  # 保守估计，为扩展名留空间
+    
+    # 确保字节长度不超过限制
+    encoded = sanitized.encode('utf-8')
+    if len(encoded) > max_bytes:
+        # 逐字符截断直到字节长度合适
+        while len(sanitized.encode('utf-8')) > max_bytes - 3:
+            sanitized = sanitized[:-1]
+        sanitized += "..."
+    
+    # 移除末尾的点和空格
+    sanitized = sanitized.rstrip('. ')
+    
+    # 如果截断后为空，使用默认名称
+    if not sanitized:
+        sanitized = "video"
+    
+    return sanitized
 
 def get_video_info(url, cookie_file=None):
     if yt_dlp is None:
@@ -47,17 +68,25 @@ def get_video_info(url, cookie_file=None):
         url = f'https://www.youtube.com/watch?v={video_id}'
     ydl_opts = {
         'quiet': True,
-        'no_warnings': True,
+        'no_warnings': True,  # 禁用警告以隐藏PO Token警告
         'extract_flat': False,
         'force_ipv4': True,
-        'socket_timeout': 30,  # 增加超时时间
+        'socket_timeout': 60,  # 增加超时时间
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
+            'Accept-Language': 'en-US,en;q=0.9',
         },
-        'format': 'best',  # 使用最佳格式
+        'format': 'best/worst',  # 使用更好的格式选择策略
         'retries': 10,  # 增加重试次数
-        'cookiefile': os.path.expandvars(cookie_file.strip('"')) if cookie_file else None
+        'cookiefile': os.path.expandvars(cookie_file.strip('"')) if cookie_file else None,
+        # 基于GitHub issue #12482的解决方案 - 使用tv_embedded客户端绕过SABR
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['tv_embedded'],  # tv_embedded客户端不受SABR限制影响
+                'player_skip': ['webpage'],        # 跳过网页播放器
+                'po_token': None,                  # 禁用PO Token获取以避免警告
+            }
+        },
     }
     try:
         YoutubeDL = yt_dlp.YoutubeDL
@@ -118,20 +147,35 @@ def download_video(info, output_dir):
         YoutubeDL = yt_dlp.YoutubeDL
         video_format = info.get('video_format', 'mp4')
         ydl_opts = {
-            'format': f'bestvideo+bestaudio/best',
+            'format': 'bestvideo+bestaudio/best',  # 使用与命令行相同的简单格式选择
             'merge_output_format': video_format,
-            'socket_timeout': 30,  # 增加超时时间
+            'socket_timeout': 60,  # 增加超时时间
             'force_ipv4': True,  # 强制使用 IPv4
             'http_chunk_size': 10485760,  # 分块下载，优化网络请求（10MB）
             'cookiefile': info.get('cookiefile'),
-            'outtmpl': os.path.join(output_dir, f"{info['title']}.%(ext)s"),
+            'outtmpl': os.path.join(output_dir, f"{sanitize_filename(info['title'])}.%(ext)s"),
             'sleep_interval': 2,  # 每次请求间隔 2 秒
             'max_sleep_interval': 5,  # 最大随机间隔 5 秒
+            'quiet': True,  # 安静模式
+            'no_warnings': True,  # 禁用警告以隐藏PO Token警告
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+            },
+            'prefer_ffmpeg': True,  # 优先使用ffmpeg进行合并
+            # 基于GitHub issue #12482的解决方案 - 使用tv_embedded客户端绕过SABR
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['tv_embedded'],  # tv_embedded客户端不受SABR限制影响
+                    'player_skip': ['webpage'],        # 跳过网页播放器
+                    'po_token': None,                  # 禁用PO Token获取以避免警告
+                }
+            },
         }
         print(f"⌛ Downloading video as {video_format} ...")
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([info['url']])
-        downloaded_files = [f for f in os.listdir(output_dir) if f.startswith(info['title']) and f.endswith(f".{video_format}")]
+        downloaded_files = [f for f in os.listdir(output_dir) if f.startswith(sanitize_filename(info['title'])) and f.endswith(f".{video_format}")]
         if not downloaded_files:
             raise Exception("No video file found after download")
         return downloaded_files[0]
@@ -153,7 +197,7 @@ def download_subtitles(info, output_dir):
             'force_ipv4': True,  # 强制使用 IPv4
             'http_chunk_size': 10485760,  # 分块下载，优化网络请求（10MB）
             'cookiefile': info.get('cookiefile'),  # 使用 cookie 文件绕过人机验证
-            'outtmpl': os.path.join(output_dir, f"{info['title']}.%(ext)s"),
+            'outtmpl': os.path.join(output_dir, f"{sanitize_filename(info['title'])}.%(ext)s"),
             'quiet': True,
             'no_warnings': True,
             'sleep_interval': 2,  # 每次请求间隔 2 秒
@@ -163,11 +207,12 @@ def download_subtitles(info, output_dir):
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([info['url']])
         found = False
+        sanitized_title = sanitize_filename(info['title'])
         for file in os.listdir(output_dir):
-            if file.startswith(info['title']) and file.endswith(('.ass', '.srt', '.vtt')):
+            if file.startswith(sanitized_title) and file.endswith(('.ass', '.srt', '.vtt')):
                 subtitle_path = os.path.join(output_dir, file)
                 subtitle_ext = os.path.splitext(file)[1]
-                m = re.match(rf"^{re.escape(info['title'])}\.([a-zA-Z\-]+){subtitle_ext}$", file)
+                m = re.match(rf"^{re.escape(sanitized_title)}\.([a-zA-Z\-]+){subtitle_ext}$", file)
                 lang = m.group(1) if m else None
                 if subtitle_ext == '.vtt':
                     converted_file = os.path.splitext(subtitle_path)[0] + '.ass'
@@ -176,9 +221,9 @@ def download_subtitles(info, output_dir):
                     subtitle_path = converted_file
                     subtitle_ext = '.ass'
                 if lang:
-                    new_name = f"{os.path.splitext(info['title'])[0]}.{lang}{subtitle_ext}"
+                    new_name = f"{os.path.splitext(sanitized_title)[0]}.{lang}{subtitle_ext}"
                 else:
-                    new_name = f"{os.path.splitext(info['title'])[0]}{subtitle_ext}"
+                    new_name = f"{os.path.splitext(sanitized_title)[0]}{subtitle_ext}"
                 os.rename(subtitle_path, os.path.join(output_dir, new_name))
                 print(f"✅ Subtitle saved as: {new_name}")
                 found = True
