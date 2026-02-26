@@ -9,6 +9,9 @@ import importlib.util
 import zipfile
 import tarfile
 import tempfile
+from urllib.parse import urlparse, parse_qs
+
+ILLEGAL_XML_CHARS_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
 # 直接导入pip安装的yt-dlp
 try:
@@ -34,6 +37,142 @@ except ImportError as e:
     # 不直接退出，让程序继续运行，在Web界面中提示用户安装
     yt_dlp = None
 
+def clean_xml_text(value):
+    """清理会破坏XML格式的非法控制字符，并统一换行符。"""
+    if value is None:
+        return ""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return ILLEGAL_XML_CHARS_RE.sub("", text)
+
+def indent_xml(element, level=0):
+    """为ElementTree添加可读的缩进格式。"""
+    indent = "\n" + "  " * level
+    child_indent = "\n" + "  " * (level + 1)
+    children = list(element)
+    if children:
+        if not element.text or not element.text.strip():
+            element.text = child_indent
+        for child in children:
+            indent_xml(child, level + 1)
+        if not children[-1].tail or not children[-1].tail.strip():
+            children[-1].tail = indent
+    if level and (not element.tail or not element.tail.strip()):
+        element.tail = indent
+
+def add_text_element(parent, tag, value):
+    """仅在文本非空时创建节点，避免空标签影响NFO可读性。"""
+    text = clean_xml_text(value)
+    if text:
+        ET.SubElement(parent, tag).text = text
+        return True
+    return False
+
+def description_outline(text, max_len=180):
+    """提取简介首行作为outline，保持简洁。"""
+    content = clean_xml_text(text)
+    if not content:
+        return ""
+    first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+    if not first_line:
+        return ""
+    return first_line[:max_len].rstrip()
+
+def normalize_actor_name(name):
+    """规范化演员名，去掉频道属性后缀和噪声标记。"""
+    text = clean_xml_text(name).strip()
+    if not text:
+        return ""
+
+    # 去掉以@开头的账号ID（不适合作为演员名）
+    if text.startswith("@"):
+        return ""
+
+    # 去掉常见频道后缀
+    text = re.sub(
+        r"\s*(?:official(?:\s*channel)?|channel|公式(?:チャンネル)?|オフィシャル)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 去掉尾部括号中的品牌性注记（如【HoneyWorks】）
+    text = re.sub(
+        r"\s*[【\[\(（](?:official|公式|honeyworks|channel|オフィシャル)[^】\]\)）]*[】\]\)）]\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    return text.strip(" \t-_|/")
+
+def extract_actor_names(video_info):
+    """提取演员名：频道主 + 结构化创作者字段，不从标题推断。"""
+    original = video_info.get('original_info') or {}
+    names = []
+
+    def append_name(name):
+        text = normalize_actor_name(name)
+        if text and text not in names:
+            names.append(text)
+
+    def append_from_value(value):
+        if isinstance(value, str):
+            # 有些字段会以单字符串返回多个创作者，如 "A, B"
+            parts = re.split(r"\s*(?:,|，|、|;|；|/|／|\|)\s*", value)
+            for part in parts:
+                append_name(part)
+        elif isinstance(value, dict):
+            append_name(value.get('name') or value.get('title') or "")
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                append_from_value(item)
+
+    # 仅从频道主相关字段提取（优先channel，再uploader）
+    append_name(original.get('channel'))
+    append_name(video_info.get('uploader'))
+    append_name(original.get('uploader'))
+
+    # 补充结构化创作者信息（例如 creators: ['KAWAII LAB.', 'CANDY TUNE']）
+    for key in ("creators", "creator", "artists", "artist"):
+        append_from_value(original.get(key))
+
+    # 你要求演员必须有：提取不到时给占位值
+    if not names:
+        names = ["未知演员"]
+    return names[:10]
+
+def normalize_youtube_url(url):
+    """统一YouTube链接为watch?v=VIDEO_ID格式，避免短链提取失败。"""
+    text = clean_xml_text(url).strip()
+    if not text:
+        return text
+    try:
+        parsed = urlparse(text)
+        host = parsed.netloc.lower()
+        path = parsed.path or ""
+
+        if "youtu.be" in host:
+            video_id = path.lstrip("/").split("/")[0]
+            if video_id:
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+        if "youtube.com" in host:
+            query = parse_qs(parsed.query or "")
+            if query.get("v"):
+                return f"https://www.youtube.com/watch?v={query['v'][0]}"
+
+            short_match = re.match(r"^/(?:shorts|live|embed)/([^/?#]+)", path)
+            if short_match:
+                return f"https://www.youtube.com/watch?v={short_match.group(1)}"
+    except Exception:
+        pass
+
+    # 兜底兼容旧逻辑
+    if 'youtube.com/watch?v=' in text:
+        video_id = text.split('watch?v=')[-1].split('&')[0]
+        return f'https://www.youtube.com/watch?v={video_id}'
+    return text
+
 def sanitize_filename(title):
     # 移除不允许的字符（Linux中主要是斜杠和空字符）
     sanitized = "".join(c for c in title if c not in '/\0').strip()
@@ -58,76 +197,151 @@ def sanitize_filename(title):
     
     return sanitized
 
-def get_video_info(url, cookie_file=None):
-    if yt_dlp is None:
-        raise ImportError("yt-dlp未安装，请运行: pip install --pre yt-dlp")
-    
-    # 确保 URL 格式正确
-    if 'youtube.com/watch?v=' in url:
-        video_id = url.split('watch?v=')[-1].split('&')[0]
-        url = f'https://www.youtube.com/watch?v={video_id}'
-    ydl_opts = {
+def has_playable_formats(formats):
+    """判断格式列表中是否存在可下载的音视频流（排除storyboard图片流）。"""
+    if not formats:
+        return False
+    for f in formats:
+        ext = (f.get('ext') or '').lower()
+        vcodec = (f.get('vcodec') or '').lower()
+        acodec = (f.get('acodec') or '').lower()
+        # 排除 storyboard 图片格式
+        if ext == 'mhtml' or vcodec == 'images':
+            continue
+        if vcodec != 'none' or (acodec and acodec != 'none'):
+            return True
+    return False
+
+def build_ytdlp_base_opts():
+    """构建yt-dlp通用参数，启用EJS能力以应对YouTube挑战。"""
+    return {
         'quiet': True,
-        'no_warnings': True,  # 禁用警告以隐藏PO Token警告
+        'no_warnings': True,
         'extract_flat': False,
+        'ignore_no_formats_error': True,
         'force_ipv4': True,
-        'socket_timeout': 60,  # 增加超时时间
+        'socket_timeout': 60,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
         },
-        'format': 'best/worst',  # 使用更好的格式选择策略
-        'retries': 10,  # 增加重试次数
-        'cookiefile': os.path.expandvars(cookie_file.strip('"')) if cookie_file else None,
-        # 基于GitHub issue #12482的解决方案 - 使用tv_embedded客户端绕过SABR
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded'],  # tv_embedded客户端不受SABR限制影响
-                'player_skip': ['webpage'],        # 跳过网页播放器
-                'po_token': None,                  # 禁用PO Token获取以避免警告
-            }
+        'retries': 10,
+        # 2026版yt-dlp默认仅启用deno。这里额外启用node，并允许拉取官方ejs远程组件
+        'js_runtimes': {
+            'deno': {},
+            'node': {'path': 'node'},
         },
+        'remote_components': {'ejs:github'},
     }
+
+def get_video_info(url, cookie_file=None):
+    if yt_dlp is None:
+        raise ImportError("yt-dlp未安装，请运行: pip install --pre yt-dlp")
+    
+    # 统一链接格式，避免短链/分享链接触发提取差异
+    url = normalize_youtube_url(url)
+    base_opts = build_ytdlp_base_opts()
     try:
         YoutubeDL = yt_dlp.YoutubeDL
+
+        def extract_info_with_cookie(cookie_candidate):
+            opts = dict(base_opts)
+            resolved_cookie = os.path.expandvars(cookie_candidate.strip('"')) if cookie_candidate else None
+            opts['cookiefile'] = resolved_cookie
+            with YoutubeDL(opts) as ydl:
+                extracted = ydl.extract_info(url, download=False)
+            return extracted, resolved_cookie
+
+        resolved_cookie_display = os.path.expandvars(cookie_file.strip('"')) if cookie_file else None
         if cookie_file:
-            print(f"ℹ️ Using cookie file: {ydl_opts['cookiefile']}")
+            print(f"ℹ️ Using cookie file: {resolved_cookie_display}")
         print(f"⌛ 正在获取视频信息: {url}")
-        with YoutubeDL(ydl_opts) as ydl:
-            print("📋 获取可用格式列表...")
-            info = ydl.extract_info(url, download=False)
+        print("📋 获取可用格式列表...")
+
+        info = None
+        effective_cookie = os.path.expandvars(cookie_file.strip('"')) if cookie_file else None
+        cookie_storyboard_only = False
+        try:
+            info, effective_cookie = extract_info_with_cookie(cookie_file)
+        except Exception as first_error:
+            # 某些视频在特定客户端策略下会出现“Requested format is not available”，回退到默认策略重试
+            if "Requested format is not available" not in str(first_error):
+                raise
+            print("⚠️ 当前提取策略未返回可用格式，正在切换为默认策略重试...")
+            info, effective_cookie = extract_info_with_cookie(cookie_file)
+
+        if not info:
+            raise Exception("无法获取视频信息")
+        if info.get('_type') == 'playlist':
+            entries = info.get('entries') or []
+            info = next((entry for entry in entries if entry), None)
             if not info:
-                raise Exception("无法获取视频信息")
-            print(f"\n📺 视频标题: {info.get('title', 'Unknown')}")
-            print(f"👤 上传者: {info.get('uploader', 'Unknown')}")
-            formats = info.get('formats', [])
-            if not formats:
-                print("⚠️ 没有找到可用的视频格式")
-            else:
-                print("\n🎥 可用的视频格式：")
-                for f in formats:
-                    format_id = f.get('format_id', 'N/A')
-                    ext = f.get('ext', 'N/A')
-                    resolution = f.get('resolution', 'N/A')
-                    filesize = f.get('filesize', 0)
-                    if filesize:
-                        filesize = f"{filesize/1024/1024:.1f}MB"
-                    else:
-                        filesize = 'N/A'
-                    print(f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 大小: {filesize}")
-            upload_date = info.get('upload_date', '')
-            return {
-                'title': sanitize_filename(info.get('title', 'No Title')),
-                'description': info.get('description', ''),
-                'uploader': info.get('uploader', 'Unknown'),
-                'publish_date': f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}" if upload_date else "",
-                'year': upload_date[:4] if upload_date else "",
-                'thumbnail_url': info.get('thumbnail', ''),
-                'tags': info.get('tags', []),
-                'url': url,
-                'formats': formats,
-                'original_info': info
-            }
+                raise Exception("无法从播放列表结果中提取视频信息")
+        print(f"\n📺 视频标题: {info.get('title', 'Unknown')}")
+        print(f"👤 上传者: {info.get('uploader', 'Unknown')}")
+        formats = info.get('formats', [])
+
+        # 某些环境在“带cookie”时只返回storyboard格式，尝试自动回退到不使用cookie
+        if cookie_file and not has_playable_formats(formats):
+            cookie_storyboard_only = True
+            print("⚠️ 检测到当前 cookie 可能已失效、权限不足或导出不完整（仅返回 storyboard）。")
+            print("⚠️ 建议重新导出 cookies.txt（需包含 youtube.com 且保持登录状态）。")
+            print("⚠️ 使用 cookie 仅获取到 storyboard 格式，尝试不使用 cookie 重试...")
+            try:
+                retry_info, _ = extract_info_with_cookie(None)
+                if retry_info and retry_info.get('_type') == 'playlist':
+                    entries = retry_info.get('entries') or []
+                    retry_info = next((entry for entry in entries if entry), None)
+                retry_formats = retry_info.get('formats', []) if retry_info else []
+                if retry_info and has_playable_formats(retry_formats):
+                    info = retry_info
+                    formats = retry_formats
+                    effective_cookie = None
+                    cookie_storyboard_only = False
+                    print("✅ 不使用 cookie 获取到了可下载格式，后续将按无 cookie 继续。")
+            except Exception as retry_error:
+                print(f"⚠️ 无 cookie 重试失败: {retry_error}")
+
+        if not formats:
+            print("⚠️ 没有找到可用的视频格式")
+        else:
+            print("\n🎥 可用的视频格式：")
+            for f in formats:
+                format_id = f.get('format_id', 'N/A')
+                ext = f.get('ext', 'N/A')
+                resolution = f.get('resolution', 'N/A')
+                filesize = f.get('filesize', 0)
+                if filesize:
+                    filesize = f"{filesize/1024/1024:.1f}MB"
+                else:
+                    filesize = 'N/A'
+                print(f"ID: {format_id}, 格式: {ext}, 分辨率: {resolution}, 大小: {filesize}")
+
+        if not has_playable_formats(formats):
+            if cookie_storyboard_only:
+                raise Exception(
+                    "仅检测到 storyboard 图片格式。当前 cookie 可能已失效、权限不足或导出不完整，"
+                    "请重新导出 cookies.txt 后重试。"
+                )
+            raise Exception(
+                "仅检测到storyboard图片格式，未检测到可下载音视频流。"
+                "这通常是yt-dlp在当前环境缺少JS runtime/challenge solver导致。"
+            )
+
+        upload_date = info.get('upload_date', '')
+        return {
+            'title': sanitize_filename(info.get('title', 'No Title')),
+            'description': info.get('description', ''),
+            'uploader': info.get('uploader', 'Unknown'),
+            'publish_date': f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}" if upload_date else "",
+            'year': upload_date[:4] if upload_date else "",
+            'thumbnail_url': info.get('thumbnail', ''),
+            'tags': info.get('tags', []),
+            'url': url,
+            'formats': formats,
+            'cookiefile': effective_cookie,
+            'original_info': info
+        }
     except Exception as e:
         print(f"❌ 下载失败: {str(e)}")
         print("\n💡 提示：")
@@ -137,6 +351,10 @@ def get_video_info(url, cookie_file=None):
         print("   python -m pip install -U yt-dlp")
         print("4. 手动测试视频格式:")
         print(f"   yt-dlp --list-formats {url}")
+        print("5. 若只出现 sb0/sb1/sb2/sb3(mhtml)，请安装 JS runtime 和 challenge solver：")
+        print("   https://github.com/yt-dlp/yt-dlp/wiki/EJS")
+        if cookie_file:
+            print("6. 若使用了 cookie 且仅返回 storyboard，cookie 可能已失效，请重新导出 cookies.txt。")
         return None
 
 def download_video(info, output_dir):
@@ -146,13 +364,16 @@ def download_video(info, output_dir):
     try:
         YoutubeDL = yt_dlp.YoutubeDL
         video_format = info.get('video_format', 'mp4')
-        ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',  # 使用与命令行相同的简单格式选择
+        cookie_candidates = [info.get('cookiefile')]
+        if info.get('cookiefile'):
+            cookie_candidates.append(None)
+
+        base_opts = build_ytdlp_base_opts()
+        base_opts.update({
             'merge_output_format': video_format,
             'socket_timeout': 60,  # 增加超时时间
             'force_ipv4': True,  # 强制使用 IPv4
             'http_chunk_size': 10485760,  # 分块下载，优化网络请求（10MB）
-            'cookiefile': info.get('cookiefile'),
             'outtmpl': os.path.join(output_dir, f"{sanitize_filename(info['title'])}.%(ext)s"),
             'sleep_interval': 2,  # 每次请求间隔 2 秒
             'max_sleep_interval': 5,  # 最大随机间隔 5 秒
@@ -163,22 +384,45 @@ def download_video(info, output_dir):
                 'Accept-Language': 'en-US,en;q=0.9',
             },
             'prefer_ffmpeg': True,  # 优先使用ffmpeg进行合并
-            # 基于GitHub issue #12482的解决方案 - 使用tv_embedded客户端绕过SABR
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['tv_embedded'],  # tv_embedded客户端不受SABR限制影响
-                    'player_skip': ['webpage'],        # 跳过网页播放器
-                    'po_token': None,                  # 禁用PO Token获取以避免警告
-                }
-            },
-        }
+        })
         print(f"⌛ Downloading video as {video_format} ...")
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([info['url']])
-        downloaded_files = [f for f in os.listdir(output_dir) if f.startswith(sanitize_filename(info['title'])) and f.endswith(f".{video_format}")]
+        download_errors = []
+        format_candidates = [
+            'bestvideo*+bestaudio/best',
+            'bestvideo+bestaudio/best',
+            'best'
+        ]
+        download_success = False
+        for cookie_idx, cookie_candidate in enumerate(cookie_candidates):
+            if cookie_idx > 0:
+                print("⚠️ 带 cookie 下载失败，正在回退为不使用 cookie 重试...")
+            for idx, format_expr in enumerate(format_candidates):
+                try:
+                    trial_opts = dict(base_opts)
+                    trial_opts['cookiefile'] = cookie_candidate
+                    trial_opts['format'] = format_expr
+                    with YoutubeDL(trial_opts) as ydl:
+                        ydl.download([info['url']])
+                    download_success = True
+                    break
+                except Exception as e:
+                    download_errors.append(str(e))
+                    if idx < len(format_candidates) - 1:
+                        print(f"⚠️ 下载格式 {format_expr} 不可用，尝试下一个格式...")
+            if download_success:
+                break
+        if not download_success:
+            raise Exception(download_errors[-1] if download_errors else "视频下载失败")
+
+        downloaded_files = [
+            f for f in os.listdir(output_dir)
+            if f.startswith(sanitize_filename(info['title']))
+            and os.path.splitext(f)[1].lower() in {'.mp4', '.mkv', '.webm', '.mov', '.m4v'}
+        ]
         if not downloaded_files:
             raise Exception("No video file found after download")
-        return downloaded_files[0]
+        preferred = [f for f in downloaded_files if f.lower().endswith(f".{video_format.lower()}")]
+        return preferred[0] if preferred else downloaded_files[0]
     except Exception as e:
         print(f"❌ Video download failed: {str(e)}")
         return None
@@ -189,7 +433,8 @@ def download_subtitles(info, output_dir):
     
     try:
         YoutubeDL = yt_dlp.YoutubeDL
-        ydl_opts = {
+        ydl_opts = build_ytdlp_base_opts()
+        ydl_opts.update({
             'writesubtitles': True,  # 启用字幕下载
             'subtitleslangs': ['ja', 'zh-Hans', 'zh-Hant'],  # 优先下载日语和中文字幕
             'subtitlesformat': 'ass/srt/vtt',  # 下载字幕格式，优先 ASS
@@ -202,7 +447,7 @@ def download_subtitles(info, output_dir):
             'no_warnings': True,
             'sleep_interval': 2,  # 每次请求间隔 2 秒
             'max_sleep_interval': 5,  # 最大随机间隔 5 秒
-        }
+        })
         print("⌛ Downloading subtitles...")
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([info['url']])
@@ -282,21 +527,54 @@ def generate_metadata_files(video_info, output_dir):
         except Exception as e:
             print(f"❌ Thumbnail download failed: {str(e)}")
     try:
-        root = ET.Element("movie")
-        ET.SubElement(root, "title").text = video_info['title']
-        ET.SubElement(root, "plot").text = video_info['description']
-        ET.SubElement(root, "premiered").text = video_info['publish_date']
-        ET.SubElement(root, "year").text = video_info['year']
-        ET.SubElement(root, "studio").text = "YouTube"
+        original = video_info.get('original_info') or {}
+        video_id = original.get('id', '')
+        webpage_url = original.get('webpage_url') or video_info.get('url', '')
+        duration_seconds = original.get('duration')
+        runtime_minutes = ""
+        if isinstance(duration_seconds, (int, float)) and duration_seconds > 0:
+            runtime_minutes = str(max(1, int(round(duration_seconds / 60.0))))
 
-        if video_info['uploader']:
-            director = ET.SubElement(root, "director")
-            director.text = video_info['uploader']
+        root = ET.Element("movie")
+        # 字段顺序尽量贴近Emby/Kodi movie.nfo惯例
+        add_text_element(root, "title", video_info.get('title'))
+        add_text_element(root, "originaltitle", video_info.get('title'))
+        add_text_element(root, "plot", video_info.get('description'))
+        add_text_element(root, "outline", description_outline(video_info.get('description')))
+        add_text_element(root, "year", video_info.get('year'))
+        add_text_element(root, "premiered", video_info.get('publish_date'))
+        add_text_element(root, "aired", video_info.get('publish_date'))
+        add_text_element(root, "runtime", runtime_minutes)
+        add_text_element(root, "studio", "YouTube")
+        add_text_element(root, "trailer", webpage_url)
+        add_text_element(root, "id", video_id)
+        if clean_xml_text(video_id):
+            uniqueid = ET.SubElement(root, "uniqueid", {"type": "youtube", "default": "true"})
+            uniqueid.text = clean_xml_text(video_id)
+        # 为海报保留显式引用，便于媒体库快速识别
+        if os.path.exists(thumbnail_path):
+            add_text_element(root, "thumb", os.path.basename(thumbnail_path))
+
+        # 默认类型标签
+        add_text_element(root, "genre", "YouTube")
+
+        for actor_name in extract_actor_names(video_info):
+            actor = ET.SubElement(root, "actor")
+            ET.SubElement(actor, "name").text = actor_name
         
         for tag in video_info.get('tags', [])[:10]:
-            ET.SubElement(root, "tag").text = tag
+            tag_text = clean_xml_text(tag)
+            if tag_text:
+                ET.SubElement(root, "tag").text = tag_text
+                ET.SubElement(root, "genre").text = tag_text
         nfo_path = os.path.join(output_dir, f"{base_name}.nfo")
-        ET.ElementTree(root).write(nfo_path, encoding='utf-8', xml_declaration=True)
+        indent_xml(root)
+        ET.ElementTree(root).write(
+            nfo_path,
+            encoding='utf-8',
+            xml_declaration=True,
+            short_empty_elements=False
+        )
         print(f"✅ NFO file generated: {nfo_path}")
     except Exception as e:
         print(f"❌ NFO generation failed: {str(e)}")
@@ -450,7 +728,7 @@ def main():
     print(f"1. 使用默认 cookie 文件: {default_cookie_path}")
     print("2. 手动输入 cookie 文件路径")
     print("3. 不使用 cookie 文件")
-    cookie_choice = input("请选择 cookie 文件方式（1/2/3，默认1）: ").strip() or "1"
+    cookie_choice = input("请选择 cookie 文件方式（1/2/3，默认1，也可直接输入路径）: ").strip() or "1"
     cookie_path = None
     if cookie_choice == "1":
         cookie_path = default_cookie_path
@@ -458,14 +736,26 @@ def main():
             print(f"⚠️ Cookie file not found: {cookie_path}")
             cookie_path = None
     elif cookie_choice == "2":
-        cookie_path = input("请输入 cookie 文件的完整路径: ").strip()
+        cookie_path = os.path.expandvars(input("请输入 cookie 文件的完整路径: ").strip().strip('"'))
         if not os.path.exists(cookie_path):
             print("⚠️ 所选文件不存在")
             cookie_path = None
         else:
             print(f"✅ 已选择 cookie 文件: {cookie_path}")
-    else:
+    elif cookie_choice == "3":
         cookie_path = None
+    else:
+        # 兼容用户直接在这里粘贴 cookie 文件路径
+        direct_cookie_path = os.path.expandvars(cookie_choice.strip('"'))
+        if os.path.exists(direct_cookie_path):
+            cookie_path = direct_cookie_path
+            print(f"✅ 已选择 cookie 文件: {cookie_path}")
+        else:
+            print(f"⚠️ 无效输入或文件不存在: {cookie_choice}")
+            cookie_path = None
+
+    if not cookie_path:
+        print("ℹ️ 当前不使用 cookie 文件")
 
     # 新增：选择视频保存格式
     print("请选择保存视频的格式：")
@@ -486,7 +776,8 @@ def main():
         if not video_info:
             print("❌ Failed to fetch metadata")
             continue
-        video_info['cookiefile'] = cookie_path
+        # 优先使用get_video_info中判定的有效cookie策略（可能自动回退为None）
+        video_info['cookiefile'] = video_info.get('cookiefile', cookie_path)
         video_info['video_format'] = video_format   # 传递格式信息
 
         output_dir = os.path.join(base_output_dir, video_info['title'])

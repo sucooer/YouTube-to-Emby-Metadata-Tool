@@ -199,7 +199,8 @@ def start_download():
             if not video_info:
                 raise Exception("获取视频信息失败")
             
-            video_info['cookiefile'] = cookie_file if cookie_file else None
+            # 优先使用get_video_info中判定的有效cookie策略（可能自动回退为None）
+            video_info['cookiefile'] = video_info.get('cookiefile', cookie_file if cookie_file else None)
             video_info['video_format'] = video_format
             
             # 创建输出目录
