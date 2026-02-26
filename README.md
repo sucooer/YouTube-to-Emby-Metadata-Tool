@@ -23,19 +23,22 @@ A comprehensive YouTube video downloader with Emby media server integration. Thi
 4. Select option `[1]` to start the web interface
 
 ### Option 2: Manual Setup
-1. Install Python 3.7+ if not already installed
+1. Install Python 3.8+ if not already installed
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Choose your preferred interface:
+3. (Recommended) Install Node.js LTS for yt-dlp JS challenge solving:
+   https://nodejs.org/
+4. Choose your preferred interface:
    - **Web Interface**: `python app.py` then open http://localhost:5000
    - **Desktop GUI**: `python youtube_to_emby_gui.py`
 
 ## 💻 System Requirements
 
 - **Operating System**: Windows 10/11, macOS, or Linux
-- **Python**: 3.7 or higher (for source code usage)
+- **Python**: 3.8 or higher (for source code usage)
+- **Node.js**: LTS recommended (required for some YouTube JS challenge scenarios)
 - **Internet Connection**: Required for downloads and updates
 - **Browser**: Modern web browser (for web interface)
 
@@ -69,6 +72,7 @@ A comprehensive YouTube video downloader with Emby media server integration. Thi
 - **Update/network failure**: Please check your network or try again later
 - **Auto-restart not working**: Please use `--onedir` packaging, do not use `--onefile`
 - **Other missing dependencies**: Please install with `pip install -r requirements.txt`
+- **Only storyboard formats (sb0/sb1/...)**: install/verify Node.js and run `pip install -U yt-dlp-ejs`
 
 ## Development Notes
 

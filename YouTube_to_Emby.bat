@@ -112,6 +112,19 @@ echo [OK] pip is installed
 pip --version
 echo.
 
+:: Check Node.js (recommended for yt-dlp EJS challenge solving)
+node --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] Node.js not found (recommended)
+    echo [WARN] Some YouTube videos may fail due to JS challenge solving.
+    echo [WARN] Install Node.js LTS: https://nodejs.org/
+    echo.
+) else (
+    echo [OK] Node.js is installed
+    node --version
+    echo.
+)
+
 :: Upgrade pip
 echo Upgrading pip...
 python -m pip install --upgrade pip
@@ -124,6 +137,8 @@ pip install -r requirements.txt
 echo.
 echo Installing yt-dlp nightly version...
 pip install --upgrade --pre yt-dlp
+echo Installing yt-dlp EJS helper...
+pip install --upgrade yt-dlp-ejs
 echo ----------------------------------------
 
 if %errorlevel% equ 0 (

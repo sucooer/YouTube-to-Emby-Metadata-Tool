@@ -5,4 +5,5 @@ pysubs2>=1.6.0
 flask>=2.3.0
 flask-socketio>=5.3.0
 watchdog>=3.0.0
-yt-dlp 
+yt-dlp
+yt-dlp-ejs>=0.5.0

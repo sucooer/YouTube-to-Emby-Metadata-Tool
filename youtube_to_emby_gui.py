@@ -304,7 +304,8 @@ class YouTubeToEmbyApp(ctk.CTk):
                 self.update_status("获取视频信息失败")
                 return
 
-            video_info['cookiefile'] = cookie_path
+            # 优先使用get_video_info中判定的有效cookie策略（可能自动回退为None）
+            video_info['cookiefile'] = video_info.get('cookiefile', cookie_path)
             video_info['video_format'] = video_format
 
             output_dir = os.path.join(output_dir, video_info['title'])
@@ -312,13 +313,13 @@ class YouTubeToEmbyApp(ctk.CTk):
             self.update_status(f"创建输出目录: {output_dir}")
 
             self.update_status("开始下载视频...")
-            video_filename = download_video(video_info, output_dir, ytdlp_version)
+            video_filename = download_video(video_info, output_dir)
             if not video_filename:
                 self.update_status("视频下载失败")
                 return
 
             self.update_status("开始下载字幕...")
-            download_subtitles(video_info, output_dir, ytdlp_version)
+            download_subtitles(video_info, output_dir)
 
             self.update_status("生成元数据文件...")
             generate_metadata_files(video_info, output_dir)
